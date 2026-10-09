@@ -1,0 +1,52 @@
+name: Deploy no kind
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, kind]
+    env:
+      NODE: aula-11-control-plane
+      IMAGE: nginx-aula-11:1.0.0
+      KUBECTL: kubectl --kubeconfig /etc/kubernetes/admin.conf
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Imagem do Terraform com Docker CLI
+        run: docker build -t terraform-docker -f iac/Dockerfile.terraform iac
+
+      - name: Criar cluster kind (se ainda nao existir)
+        run: |
+          if docker ps --format '{{.Names}}' | grep -qx "$NODE"; then
+            echo "Cluster ja existe, pulando o Terraform."
+          else
+            TF="docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock -v $PWD/iac:/workspace -w /workspace terraform-docker"
+            $TF init -input=false
+            $TF apply -auto-approve -input=false
+          fi
+
+      - name: Build da imagem
+        run: docker build -t "$IMAGE" app
+
+      - name: Carregar a imagem no cluster
+        run: docker save "$IMAGE" | docker exec -i "$NODE" ctr -n k8s.io images import -
+
+      - name: Aplicar manifestos
+        run: |
+          docker exec -i "$NODE" $KUBECTL apply -f - < manifestos/deployment.yaml
+          docker exec -i "$NODE" $KUBECTL apply -f - < manifestos/service.yaml
+
+      - name: Reiniciar pods com a imagem nova
+        run: |
+          docker exec "$NODE" $KUBECTL rollout restart deployment/nginx-aula-11
+          docker exec "$NODE" $KUBECTL rollout status deployment/nginx-aula-11 --timeout=120s
+
+      - name: Verificar
+        run: |
+          docker exec "$NODE" $KUBECTL get pods,svc -l app=nginx-aula-11
+          docker exec "$NODE" curl -sf http://localhost:30081 | head -n 15

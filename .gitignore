@@ -1,0 +1,10 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# Arquivos temporarios
+*.tar
+
+# Kubeconfig gerado pelo kind
+iac/aula-11-config
